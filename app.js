@@ -142,6 +142,76 @@ function logout() {
   location.reload();
 }
 
+// ─── BACKUP ───────────────────────────────────────────────
+const BACKUP_KEYS = [
+  'staff','sales_log','recon_log','attendance_log','expenses',
+  'inventory','sops','vendors','task_templates','daily_task_log',
+  'products','product_log','setup_done',
+];
+
+async function backupAll(silent = false) {
+  const url = ls('script_url') || CFG.SCRIPT_URL;
+  if (!url) {
+    if (!silent) toast('Set Google Sheets URL in Settings first', 'warning');
+    return false;
+  }
+  const snapshot = {};
+  BACKUP_KEYS.forEach(key => {
+    const raw = localStorage.getItem('px_' + key);
+    if (raw) snapshot[key] = raw;
+  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'fullBackup',
+        backupJson: JSON.stringify(snapshot),
+        version: CFG.APP_VERSION,
+        device: navigator.userAgent.substring(0, 120),
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      ls('last_backup', Date.now());
+      if (!silent) toast('All data backed up to cloud', 'success');
+      return true;
+    }
+  } catch {}
+  if (!silent) toast('Backup failed — check internet connection', 'error');
+  return false;
+}
+
+async function autoBackupIfNeeded() {
+  const url = ls('script_url') || CFG.SCRIPT_URL;
+  if (!url) return;
+  const last = ls('last_backup') || 0;
+  if ((Date.now() - last) >= 24 * 3600 * 1000) {
+    await backupAll(true);
+  }
+}
+
+async function restoreFromBackup() {
+  const url = ls('script_url') || CFG.SCRIPT_URL;
+  if (!url) { toast('Set Google Sheets URL in Settings first', 'warning'); return; }
+  if (!confirm('Restore all data from your last cloud backup?\n\nThis will overwrite your current local data. The page will reload.')) return;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'getLatestBackup' }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.result?.backupJson) { toast('No backup found in cloud', 'error'); return; }
+    const snapshot = JSON.parse(data.result.backupJson);
+    Object.entries(snapshot).forEach(([key, val]) => localStorage.setItem('px_' + key, val));
+    toast(`Restored from ${data.result.timestamp}`, 'success');
+    setTimeout(() => location.reload(), 1500);
+  } catch {
+    toast('Restore failed — check internet connection', 'error');
+  }
+}
+
 // ─── GOOGLE SHEETS API ────────────────────────────────────
 async function apiCall(action, payload = {}) {
   const url = ls('script_url') || CFG.SCRIPT_URL;
@@ -2675,6 +2745,29 @@ function settings(main) {
       </div>
     </div>
 
+    <!-- CLOUD BACKUP -->
+    <div class="settings-section">
+      <div class="settings-section-title">Cloud Backup</div>
+      ${(() => {
+        const lastTs = ls('last_backup') || 0;
+        const lastStr = lastTs ? new Date(lastTs).toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : 'Never';
+        return `
+          <div class="card text-sm" style="margin-bottom:10px">
+            <div class="flex justify-between items-center">
+              <span class="text-muted">Last backup</span>
+              <strong id="last-backup-label">${lastStr}</strong>
+            </div>
+            <div class="text-muted mt-1" style="font-size:0.75rem">Backs up all data (sales, expenses, attendance, inventory, vendors, SOPs, staff, tasks) once a day automatically.</div>
+          </div>
+          <div class="flex gap-2" style="flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="runManualBackup()">Backup All Data Now</button>
+            ${scriptUrl ? `<button class="btn btn-secondary btn-sm" onclick="restoreFromBackup()">Restore from Cloud</button>` : ''}
+          </div>
+          ${!scriptUrl ? `<p class="text-muted text-sm mt-1">Set your Sheets URL above to enable cloud backup.</p>` : ''}
+        `;
+      })()}
+    </div>
+
     <!-- APP SETTINGS -->
     <div class="settings-section">
       <div class="settings-section-title">App Settings</div>
@@ -3673,6 +3766,17 @@ function deleteProduct(id) {
 }
 
 // ─── BOOT ────────────────────────────────────────────────
+async function runManualBackup() {
+  const btn = document.querySelector('[onclick="runManualBackup()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Backing up…'; }
+  const ok = await backupAll(false);
+  if (ok) {
+    const label = document.getElementById('last-backup-label');
+    if (label) label.textContent = new Date().toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Backup All Data Now'; }
+}
+
 function boot() {
   // Check first run
   if (!ls('setup_done')) {
@@ -3774,6 +3878,9 @@ function showApp() {
   // Sync any offline data
   syncOfflineQueue();
 
+  // Auto-backup all data once per day
+  autoBackupIfNeeded();
+
   // Load dashboard
   navigate('dashboard');
 }
@@ -3866,3 +3973,6 @@ window.saveProductEdit = saveProductEdit;
 window.deleteProduct = deleteProduct;
 window.addIngredientRow = addIngredientRow;
 window.removeIngredientRow = removeIngredientRow;
+window.backupAll = backupAll;
+window.restoreFromBackup = restoreFromBackup;
+window.runManualBackup = runManualBackup;
