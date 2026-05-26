@@ -903,7 +903,7 @@ function sales(main) {
   salesRowCount = 0;
 
   // Wire up live totals
-  el('sales-date').addEventListener('change', loadSalesForDate);
+  el('sales-date').addEventListener('change', () => loadSalesForDate());
   document.getElementById('sales-rows').addEventListener('input', updateSalesTotals);
   el('edc-orders').addEventListener('input', updateSalesTotals);
   el('edc-amount').addEventListener('input', updateSalesTotals);
@@ -3003,7 +3003,7 @@ function updateStaff(id) {
   s.phone = phone;
   s.role  = role;
   if (newPin) s.pin = newPin;
-  if (newPw !== undefined) s.password = newPw;
+  s.password = newPw || ''; // empty string = password removed
   saveStaffList(list);
   // Update live session only if we just edited our own record
   if (newPin && editingSelf) {
@@ -3278,7 +3278,8 @@ function completeSetup() {
   ];
   saveStaffList(staff);
   ls('setup_done', true);
-  ls('device_account', true); // this device's owner account is set up
+  ls('device_registered', true);
+  ls('device_account', true);
   location.reload();
 }
 
@@ -4037,8 +4038,12 @@ function showAccessScreen(msg) {
 async function autoRegisterFounderDevice() {
   const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
   if (!scriptUrl || ls('device_registered')) return;
+  // Set locally first — this is the founder device regardless of network
+  ls('device_registered', true);
+  ls('device_account', true);
+  // Also log to Sheets so the device appears in the device list
   try {
-    const res = await fetch(scriptUrl, {
+    await fetch(scriptUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({
@@ -4048,11 +4053,6 @@ async function autoRegisterFounderDevice() {
         label: (STATE.user?.name || 'Owner') + ' — ' + getDeviceName(),
       }),
     });
-    const data = await res.json();
-    if (data.ok && data.result?.registered) {
-      ls('device_registered', true);
-      ls('device_account', true); // founder = account already exists
-    }
   } catch {}
 }
 
@@ -4365,6 +4365,10 @@ function saveODClientId() {
 
 function showRegisterScreen() {
   el('register-screen').classList.remove('hidden');
+  // Clear error whenever user changes any field
+  ['reg-name','reg-password','reg-password2','reg-pin','reg-pin2'].forEach(id => {
+    el(id)?.addEventListener('input', () => el('reg-error')?.classList.add('hidden'));
+  });
 }
 
 async function submitRegistration() {
@@ -4433,8 +4437,11 @@ async function boot() {
     return;
   }
 
-  // Migration: devices set up before self-registration was added — mark account as done
-  if (ls('setup_done') && !ls('device_account')) ls('device_account', true);
+  // Migration: devices that originally ran setup are always registered + have an account
+  if (ls('setup_done')) {
+    if (!ls('device_registered')) ls('device_registered', true);
+    if (!ls('device_account'))    ls('device_account', true);
+  }
 
   // Check device registration (only enforced when Sheets URL is set)
   const access = await checkDeviceAccess();
@@ -4494,6 +4501,7 @@ function showLoginScreen() {
     });
   };
   const tryPinLogin = () => {
+    el('login-error')?.classList.add('hidden'); // clear any previous error
     if (pin.length < 4) { showError('PIN must be exactly 4 digits'); return; }
     const user = authenticate(pin);
     if (user) doLogin(user); else showError('Invalid PIN — try again');
@@ -4684,6 +4692,7 @@ window.generateInviteLink = generateInviteLink;
 window.createInvite = createInvite;
 window.copyInviteLink = copyInviteLink;
 window.loadRegisteredDevices = loadRegisteredDevices;
+window.loadRegistrations = loadRegistrations;
 window.revokeDevice = revokeDevice;
 window.connectOneDrive = connectOneDrive;
 window.disconnectOneDrive = disconnectOneDrive;
