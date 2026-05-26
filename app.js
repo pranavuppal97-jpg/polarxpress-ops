@@ -183,11 +183,15 @@ async function backupAll(silent = false) {
 }
 
 async function autoBackupIfNeeded() {
-  const url = ls('script_url') || CFG.SCRIPT_URL;
-  if (!url) return;
-  const last = ls('last_backup') || 0;
-  if ((Date.now() - last) >= 24 * 3600 * 1000) {
-    await backupAll(true);
+  const lastSheets = ls('last_backup') || 0;
+  const lastOD     = ls('od_last_backup') || 0;
+  if ((Date.now() - lastSheets) >= 24 * 3600 * 1000) {
+    const url = ls('script_url') || CFG.SCRIPT_URL;
+    if (url) await backupAll(true);
+  }
+  if ((Date.now() - lastOD) >= 24 * 3600 * 1000) {
+    const token = await getODToken();
+    if (token) await backupToOneDrive(true);
   }
 }
 
@@ -2756,27 +2760,72 @@ function settings(main) {
       </div>
     </div>
 
-    <!-- CLOUD BACKUP -->
+    <!-- CLOUD BACKUP — GOOGLE SHEETS -->
     <div class="settings-section">
-      <div class="settings-section-title">Cloud Backup</div>
+      <div class="settings-section-title">Google Sheets Backup</div>
       ${(() => {
         const lastTs = ls('last_backup') || 0;
         const lastStr = lastTs ? new Date(lastTs).toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : 'Never';
         return `
-          <div class="card text-sm" style="margin-bottom:10px">
-            <div class="flex justify-between items-center">
-              <span class="text-muted">Last backup</span>
-              <strong id="last-backup-label">${lastStr}</strong>
+          <div class="card" style="margin-bottom:10px;padding:10px 12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:0.82rem;color:var(--text3)">Last backup</span>
+              <strong id="last-backup-label" style="font-size:0.85rem">${lastStr}</strong>
             </div>
-            <div class="text-muted mt-1" style="font-size:0.75rem">Backs up all data (sales, expenses, attendance, inventory, vendors, SOPs, staff, tasks) once a day automatically.</div>
+            <div style="font-size:0.75rem;color:var(--text3);margin-top:4px">Full snapshot of all data backed up once a day automatically.</div>
           </div>
-          <div class="flex gap-2" style="flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary btn-sm" onclick="runManualBackup()">Backup All Data Now</button>
-            ${scriptUrl ? `<button class="btn btn-secondary btn-sm" onclick="restoreFromBackup()">Restore from Cloud</button>` : ''}
+            ${scriptUrl ? `<button class="btn btn-secondary btn-sm" onclick="restoreFromBackup()">Restore from Sheets</button>` : ''}
           </div>
-          ${!scriptUrl ? `<p class="text-muted text-sm mt-1">Set your Sheets URL above to enable cloud backup.</p>` : ''}
+          ${!scriptUrl ? `<p style="font-size:0.8rem;color:var(--text3);margin-top:6px">Set your Sheets URL above to enable this backup.</p>` : ''}
         `;
       })()}
+    </div>
+
+    <!-- CLOUD BACKUP — ONEDRIVE -->
+    <div class="settings-section">
+      <div class="settings-section-title">OneDrive Backup</div>
+      ${(() => {
+        const odToken     = ls('od_access_token');
+        const odClientId  = ls('od_client_id') || '';
+        const odLastTs    = ls('od_last_backup') || 0;
+        const odLastStr   = odLastTs ? new Date(odLastTs).toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : 'Never';
+        if (odToken) {
+          return `
+            <div class="card" style="margin-bottom:10px;padding:10px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:0.82rem;color:var(--text3)">Last backup</span>
+                <strong id="od-last-backup-label" style="font-size:0.85rem">${odLastStr}</strong>
+              </div>
+              <div style="font-size:0.75rem;color:var(--text3);margin-top:4px">Backs up daily to <strong>OneDrive/PolarXpressOps/</strong></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" onclick="runManualBackup()">Backup Now</button>
+              <button class="btn btn-secondary btn-sm" onclick="restoreFromOneDrive()">Restore from OneDrive</button>
+              <button class="btn btn-secondary btn-sm" onclick="disconnectOneDrive()">Disconnect</button>
+            </div>`;
+        }
+        return `
+          <p style="font-size:0.83rem;color:var(--text3);margin-bottom:10px">Connect your company OneDrive account. Backups are saved as JSON files in <strong>OneDrive/PolarXpressOps/</strong>.</p>
+          <div class="form-group" style="margin-bottom:8px">
+            <label class="form-label">Azure App Client ID</label>
+            <input type="text" id="od-client-id" value="${odClientId}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="font-family:monospace;font-size:0.8rem">
+            <p class="form-hint">Create a free app at <strong>portal.azure.com</strong> → App registrations → New. Add redirect URI: <span style="font-family:monospace;font-size:0.78rem;word-break:break-all">${location.origin + location.pathname.replace(/[^/]*$/, '')}</span></p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="saveODClientId()">Save Client ID</button>
+            <button class="btn btn-primary btn-sm" onclick="connectOneDrive()">Sign in with Microsoft</button>
+          </div>`;
+      })()}
+    </div>
+
+    <!-- DEVICE ACCESS -->
+    <div class="settings-section">
+      <div class="settings-section-title">Device Access</div>
+      <p style="font-size:0.83rem;color:var(--text3);margin-bottom:10px">Generate an invite link to let someone register a new device. Revoke any device at any time. Requires Google Sheets URL to be set.</p>
+      <button class="btn btn-primary btn-sm" onclick="generateInviteLink()" style="margin-bottom:12px">Generate Invite Link</button>
+      <div id="device-list"></div>
     </div>
 
     <!-- APP SETTINGS -->
@@ -2808,14 +2857,17 @@ function settings(main) {
     <!-- APP INFO -->
     <div class="settings-section">
       <div class="settings-section-title">App Info</div>
-      <div class="card text-sm text-muted">
+      <div class="card" style="font-size:0.83rem;color:var(--text3);padding:10px 12px">
         <p>Polar Xpress Operations System</p>
         <p>Third Street Kitchen LLP</p>
         <p>Version ${CFG.APP_VERSION}</p>
-        <p class="mt-1">All data stored on your device &amp; Google Sheets</p>
+        <p style="margin-top:6px">Data stored on device, Google Sheets &amp; OneDrive</p>
       </div>
     </div>
   `;
+
+  // Load device list asynchronously after render
+  loadRegisteredDevices();
 }
 
 function renderStaffList(staffList) {
@@ -3017,6 +3069,7 @@ function saveScriptUrl() {
   CFG.SCRIPT_URL = url;
   toast('Google Sheets URL saved!', 'success');
   syncNow();
+  autoRegisterFounderDevice();
 }
 
 async function syncNow() {
@@ -3193,6 +3246,7 @@ function completeSetup() {
   ];
   saveStaffList(staff);
   ls('setup_done', true);
+  ensureDeviceId(); // Mark this as the founder device (registered once Sheets URL is added)
   location.reload();
 }
 
@@ -3875,22 +3929,394 @@ function deleteProduct(id) {
   navigate('products');
 }
 
-// ─── BOOT ────────────────────────────────────────────────
 async function runManualBackup() {
   const btn = document.querySelector('[onclick="runManualBackup()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Backing up…'; }
-  const ok = await backupAll(false);
-  if (ok) {
+  const url = ls('script_url') || CFG.SCRIPT_URL;
+  const odToken = await getODToken();
+  const results = await Promise.all([
+    url ? backupAll(false) : Promise.resolve(null),
+    odToken ? backupToOneDrive(false) : Promise.resolve(null),
+  ]);
+  const anyOk = results.some(r => r === true);
+  if (anyOk) {
     const label = document.getElementById('last-backup-label');
     if (label) label.textContent = new Date().toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    const odLabel = document.getElementById('od-last-backup-label');
+    if (odLabel && odToken) odLabel.textContent = new Date().toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
   }
   if (btn) { btn.disabled = false; btn.textContent = 'Backup All Data Now'; }
 }
 
-function boot() {
+// ─── DEVICE MANAGEMENT ────────────────────────────────────
+
+function ensureDeviceId() {
+  if (!ls('device_id')) {
+    ls('device_id', 'dev_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+  }
+  return ls('device_id');
+}
+
+function getDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) { const m = ua.match(/;\s*([^)]+)\)/); return m ? m[1].trim() : 'Android'; }
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Device';
+}
+
+async function checkDeviceAccess() {
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) return 'allowed'; // open-access mode (Sheets not configured)
+  if (ls('device_registered')) return 'allowed'; // already registered on this device
+
+  const params = new URLSearchParams(location.search);
+  const inviteToken = params.get('invite');
+  if (!inviteToken) return 'restricted';
+
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'registerDevice',
+        inviteToken,
+        deviceId: ensureDeviceId(),
+        deviceName: getDeviceName(),
+      }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.registered) {
+      ls('device_registered', true);
+      history.replaceState({}, '', location.pathname);
+      return 'allowed';
+    }
+  } catch {}
+  return 'invalid_invite';
+}
+
+function showAccessScreen(msg) {
+  el('access-screen').classList.remove('hidden');
+  if (msg) el('access-msg').textContent = msg;
+}
+
+async function autoRegisterFounderDevice() {
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl || ls('device_registered')) return;
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'registerFounderDevice',
+        deviceId: ensureDeviceId(),
+        deviceName: getDeviceName(),
+        label: (STATE.user?.name || 'Owner') + ' — ' + getDeviceName(),
+      }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.registered) ls('device_registered', true);
+  } catch {}
+}
+
+async function generateInviteLink() {
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) { toast('Set Google Sheets URL first', 'warning'); return; }
+  showModal('Generate Invite Link', `
+    <div class="form-group">
+      <label class="form-label">Who is this for?</label>
+      <input type="text" id="invite-label" placeholder="e.g. Ananya's phone, Store Tablet">
+      <p class="form-hint">Helps you identify the device in the device list</p>
+    </div>
+    <p style="font-size:0.8rem;color:var(--text3);margin-top:4px">Link expires in 72 hours and can only be used once.</p>
+  `, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="createInvite()">Generate Link</button>
+  `);
+}
+
+async function createInvite() {
+  const label = el('invite-label')?.value?.trim() || 'Device';
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'generateInvite', label, createdBy: STATE.user?.name || '?' }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.token) {
+      const link = `${location.origin}${location.pathname}?invite=${data.result.token}`;
+      const safeLink = link.replace(/'/g, '%27');
+      closeModal();
+      showModal('Invite Link — ' + label, `
+        <p style="font-size:0.82rem;color:var(--text3);margin-bottom:10px">Share this link via WhatsApp. One-time use, expires in 72 hours.</p>
+        <div style="background:var(--bg3);padding:12px;border-radius:8px;word-break:break-all;font-size:0.78rem;font-family:monospace;color:var(--text1);user-select:all">${link}</div>
+      `, `
+        <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+        <button class="btn btn-primary" onclick="copyInviteLink('${safeLink}')">Copy Link</button>
+      `);
+    } else {
+      toast('Failed to generate invite — check Sheets URL', 'error');
+    }
+  } catch {
+    toast('Could not reach Google Sheets', 'error');
+  }
+}
+
+function copyInviteLink(link) {
+  const decoded = decodeURIComponent(link);
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(decoded).then(() => toast('Link copied!', 'success')).catch(() => fallbackCopy(decoded));
+  } else {
+    fallbackCopy(decoded);
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
+  toast('Link copied!', 'success');
+}
+
+async function loadRegisteredDevices() {
+  const container = el('device-list');
+  if (!container) return;
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) {
+    container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Set Google Sheets URL to manage device access.</p>';
+    return;
+  }
+  container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Loading...</p>';
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'listDevices' }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.devices) {
+      const devices = data.result.devices;
+      if (!devices.length) { container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">No registered devices yet.</p>'; return; }
+      const myId = ls('device_id') || '';
+      container.innerHTML = devices.map(d => `
+        <div class="settings-row" style="align-items:center">
+          <div class="settings-row-left">
+            <span class="settings-row-label">${d.label || d.deviceName || 'Unknown'}</span>
+            <span class="settings-row-sub">${d.deviceName || ''} · Registered ${d.registeredAt}</span>
+          </div>
+          ${d.deviceId === myId
+            ? `<span class="badge badge-green" style="flex-shrink:0">This device</span>`
+            : `<button class="btn btn-sm btn-danger" onclick="revokeDevice('${d.deviceId}','${(d.label||d.deviceName||'Unknown').replace(/'/g,"\\'")}')">Revoke</button>`
+          }
+        </div>`).join('');
+    } else {
+      container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Could not load device list.</p>';
+    }
+  } catch {
+    container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Could not reach Google Sheets.</p>';
+  }
+}
+
+async function revokeDevice(deviceId, label) {
+  if (!confirm(`Revoke access for "${label}"?\n\nThey'll need a new invite link to use the app again.`)) return;
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'revokeDevice', deviceId }),
+    });
+    const data = await res.json();
+    if (data.ok) { toast(`${label} revoked`, 'info'); loadRegisteredDevices(); }
+    else toast('Could not revoke device', 'error');
+  } catch { toast('Could not reach Google Sheets', 'error'); }
+}
+
+// ─── ONEDRIVE (PKCE) ──────────────────────────────────────
+
+async function generatePKCEPair() {
+  const arr = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = btoa(String.fromCharCode(...arr)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return { verifier, challenge };
+}
+
+function getODRedirectUri() {
+  // Must match exactly what's registered in Azure
+  return location.origin + location.pathname.replace(/[^/]*$/, '');
+}
+
+async function connectOneDrive() {
+  const clientId = ls('od_client_id');
+  if (!clientId) { toast('Paste your Azure App Client ID in the field above and save first', 'warning'); return; }
+  const { verifier, challenge } = await generatePKCEPair();
+  ls('od_pkce_verifier', verifier);
+  const u = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
+  u.searchParams.set('client_id', clientId);
+  u.searchParams.set('response_type', 'code');
+  u.searchParams.set('redirect_uri', getODRedirectUri());
+  u.searchParams.set('scope', 'Files.ReadWrite User.Read offline_access');
+  u.searchParams.set('code_challenge', challenge);
+  u.searchParams.set('code_challenge_method', 'S256');
+  u.searchParams.set('response_mode', 'query');
+  location.href = u.toString();
+}
+
+async function handleODCallback() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  if (!code) return false;
+  history.replaceState({}, '', location.pathname);
+  const clientId = ls('od_client_id');
+  const verifier = ls('od_pkce_verifier');
+  if (!clientId || !verifier) return false;
+  try {
+    const body = new URLSearchParams({
+      client_id: clientId,
+      code,
+      redirect_uri: getODRedirectUri(),
+      grant_type: 'authorization_code',
+      code_verifier: verifier,
+    });
+    const res = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    const tokens = await res.json();
+    if (tokens.access_token) {
+      ls('od_access_token', tokens.access_token);
+      ls('od_refresh_token', tokens.refresh_token || '');
+      ls('od_token_expiry', Date.now() + (tokens.expires_in * 1000));
+      lsRemove('od_pkce_verifier');
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+async function getODToken() {
+  const expiry = ls('od_token_expiry') || 0;
+  if (Date.now() < expiry - 60000) return ls('od_access_token');
+  const refreshToken = ls('od_refresh_token');
+  const clientId = ls('od_client_id');
+  if (!refreshToken || !clientId) return null;
+  try {
+    const body = new URLSearchParams({
+      client_id: clientId,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+      scope: 'Files.ReadWrite User.Read offline_access',
+    });
+    const res = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    const tokens = await res.json();
+    if (tokens.access_token) {
+      ls('od_access_token', tokens.access_token);
+      ls('od_token_expiry', Date.now() + (tokens.expires_in * 1000));
+      if (tokens.refresh_token) ls('od_refresh_token', tokens.refresh_token);
+      return tokens.access_token;
+    }
+  } catch {}
+  return null;
+}
+
+async function backupToOneDrive(silent = false) {
+  const token = await getODToken();
+  if (!token) { if (!silent) toast('Connect OneDrive in Settings first', 'warning'); return false; }
+  const snapshot = {};
+  BACKUP_KEYS.forEach(key => { const raw = localStorage.getItem('px_' + key); if (raw) snapshot[key] = raw; });
+  const payload = JSON.stringify({ version: CFG.APP_VERSION, timestamp: new Date().toISOString(), data: snapshot });
+  try {
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/me/drive/root:/PolarXpressOps/backup_${STATE.today || todayStr()}.json:/content`,
+      { method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: payload }
+    );
+    if (res.ok) {
+      ls('od_last_backup', Date.now());
+      if (!silent) toast('Backed up to OneDrive!', 'success');
+      return true;
+    }
+  } catch {}
+  if (!silent) toast('OneDrive backup failed', 'error');
+  return false;
+}
+
+async function restoreFromOneDrive() {
+  const token = await getODToken();
+  if (!token) { toast('Connect OneDrive in Settings first', 'warning'); return; }
+  if (!confirm('Restore from latest OneDrive backup?\n\nThis will overwrite local data. Page will reload.')) return;
+  try {
+    const listRes = await fetch(
+      'https://graph.microsoft.com/v1.0/me/drive/root:/PolarXpressOps:/children?$orderby=lastModifiedDateTime+desc&$top=1',
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!listRes.ok) throw new Error('Could not read OneDrive folder');
+    const list = await listRes.json();
+    const file = list.value?.[0];
+    if (!file) { toast('No backup files found in OneDrive/PolarXpressOps', 'warning'); return; }
+    const dlRes = await fetch(file['@microsoft.graph.downloadUrl']);
+    if (!dlRes.ok) throw new Error('Could not download backup');
+    const backup = await dlRes.json();
+    if (!backup.data) throw new Error('Invalid backup format');
+    BACKUP_KEYS.forEach(key => { if (backup.data[key]) localStorage.setItem('px_' + key, backup.data[key]); });
+    toast('Restored from OneDrive! Reloading...', 'success');
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    toast('Restore failed: ' + e.message, 'error');
+  }
+}
+
+async function disconnectOneDrive() {
+  if (!confirm('Disconnect OneDrive? Your existing backup files in OneDrive will remain.')) return;
+  lsRemove('od_access_token');
+  lsRemove('od_refresh_token');
+  lsRemove('od_token_expiry');
+  toast('OneDrive disconnected', 'info');
+  navigate('settings');
+}
+
+function saveODClientId() {
+  const id = el('od-client-id')?.value?.trim();
+  if (!id) { toast('Paste a valid Client ID', 'warning'); return; }
+  ls('od_client_id', id);
+  toast('Client ID saved', 'success');
+}
+
+// ─── BOOT ────────────────────────────────────────────────
+
+async function boot() {
+  // Handle OneDrive OAuth callback (may be in URL from Microsoft redirect)
+  const wasODCallback = await handleODCallback();
+  if (wasODCallback) toast('OneDrive connected!', 'success');
+
   // Check first run
   if (!ls('setup_done')) {
     showFirstRun();
+    return;
+  }
+
+  // Check device registration (only enforced when Sheets URL is set)
+  const access = await checkDeviceAccess();
+  if (access === 'restricted') {
+    showAccessScreen('Ask Pranav, Raj, or Tej to send you an invite link to register this device.');
+    return;
+  }
+  if (access === 'invalid_invite') {
+    showAccessScreen('This invite link is invalid or has already been used. Ask for a new one.');
     return;
   }
 
@@ -3900,7 +4326,10 @@ function boot() {
     return;
   }
 
-  // Show login
+  showLoginScreen();
+}
+
+function showLoginScreen() {
   el('login-screen').classList.remove('hidden');
 
   // PIN pad
@@ -4086,3 +4515,13 @@ window.removeIngredientRow = removeIngredientRow;
 window.backupAll = backupAll;
 window.restoreFromBackup = restoreFromBackup;
 window.runManualBackup = runManualBackup;
+window.generateInviteLink = generateInviteLink;
+window.createInvite = createInvite;
+window.copyInviteLink = copyInviteLink;
+window.loadRegisteredDevices = loadRegisteredDevices;
+window.revokeDevice = revokeDevice;
+window.connectOneDrive = connectOneDrive;
+window.disconnectOneDrive = disconnectOneDrive;
+window.backupToOneDrive = backupToOneDrive;
+window.restoreFromOneDrive = restoreFromOneDrive;
+window.saveODClientId = saveODClientId;

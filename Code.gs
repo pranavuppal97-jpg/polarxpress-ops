@@ -16,6 +16,8 @@ const SHEETS = {
   SOPS:        'SOPs',
   LOG:         'App_Log',
   BACKUPS:     'Full_Backups',
+  DEVICES:     'Devices',
+  INVITES:     'Invites',
 };
 
 // ─── ENTRY POINT ─────────────────────────────────────────
@@ -32,9 +34,14 @@ function doPost(e) {
       case 'clockOut':          result = logAttendance(data, 'out'); break;
       case 'logExpense':        result = logExpense(data);        break;
       case 'updateInventory':   result = logInventoryUpdate(data);break;
-      case 'saveSOP':           result = saveSOP(data);          break;
-      case 'logTask':           result = logTask(data);          break;
-      case 'fullBackup':        result = saveFullBackup(data);   break;
+      case 'saveSOP':              result = saveSOP(data);              break;
+      case 'logTask':              result = logTask(data);              break;
+      case 'generateInvite':       result = generateInvite(data);      break;
+      case 'registerDevice':       result = registerDevice(data);      break;
+      case 'registerFounderDevice':result = registerFounderDevice(data);break;
+      case 'listDevices':          result = listDevices();             break;
+      case 'revokeDevice':         result = revokeDevice(data);        break;
+      case 'fullBackup':           result = saveFullBackup(data);      break;
       case 'getLatestBackup':   result = getLatestBackup();      break;
       default:
         result = { error: 'Unknown action: ' + action };
@@ -200,6 +207,98 @@ function saveSOP(data) {
     data.by, new Date().toLocaleString('en-IN'),
   ]);
   return { saved: true };
+}
+
+// ─── DEVICES & INVITES ───────────────────────────────────
+
+function generateInvite(data) {
+  const sheet = getOrCreateSheet(SHEETS.INVITES, [
+    'Token', 'Label', 'Created By', 'Created At', 'Expires At',
+    'Used By Device', 'Used At', 'Status'
+  ]);
+  const token = Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  const now     = new Date();
+  const expires = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+  sheet.appendRow([
+    token, data.label || 'Device', data.createdBy || '?',
+    now.toLocaleString('en-IN'), expires.toLocaleString('en-IN'),
+    '', '', 'pending'
+  ]);
+  return { token };
+}
+
+function registerDevice(data) {
+  const ss       = SpreadsheetApp.getActiveSpreadsheet();
+  const invSheet = ss.getSheetByName(SHEETS.INVITES);
+  if (!invSheet) return { registered: false, reason: 'No invites' };
+
+  const rows = invSheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] !== data.inviteToken) continue;
+    if (rows[i][7] !== 'pending') return { registered: false, reason: 'Token already used' };
+    const expires = new Date(rows[i][4]);
+    if (new Date() > expires) {
+      invSheet.getRange(i + 1, 8).setValue('expired');
+      return { registered: false, reason: 'Token expired' };
+    }
+    invSheet.getRange(i + 1, 6).setValue(data.deviceId);
+    invSheet.getRange(i + 1, 7).setValue(new Date().toLocaleString('en-IN'));
+    invSheet.getRange(i + 1, 8).setValue('used');
+    const label = rows[i][1];
+    const devSheet = getOrCreateSheet(SHEETS.DEVICES, [
+      'Device ID', 'Device Name', 'Label', 'Registered At', 'Registered Via', 'Status'
+    ]);
+    devSheet.appendRow([
+      data.deviceId, data.deviceName || 'Unknown', label,
+      new Date().toLocaleString('en-IN'), data.inviteToken, 'active'
+    ]);
+    return { registered: true };
+  }
+  return { registered: false, reason: 'Token not found' };
+}
+
+function registerFounderDevice(data) {
+  const devSheet = getOrCreateSheet(SHEETS.DEVICES, [
+    'Device ID', 'Device Name', 'Label', 'Registered At', 'Registered Via', 'Status'
+  ]);
+  const rows = devSheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === data.deviceId) return { registered: true, existing: true };
+  }
+  devSheet.appendRow([
+    data.deviceId, data.deviceName || 'Unknown',
+    data.label || 'Founder Device',
+    new Date().toLocaleString('en-IN'), 'founder', 'active'
+  ]);
+  return { registered: true };
+}
+
+function listDevices() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEETS.DEVICES);
+  if (!sheet || sheet.getLastRow() < 2) return { devices: [] };
+  const rows    = sheet.getDataRange().getValues().slice(1);
+  const devices = rows
+    .filter(r => r[5] !== 'revoked')
+    .map(r => ({
+      deviceId: r[0], deviceName: r[1], label: r[2],
+      registeredAt: r[3], status: r[5]
+    }));
+  return { devices };
+}
+
+function revokeDevice(data) {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEETS.DEVICES);
+  if (!sheet) return { revoked: false };
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === data.deviceId) {
+      sheet.getRange(i + 1, 6).setValue('revoked');
+      return { revoked: true };
+    }
+  }
+  return { revoked: false };
 }
 
 // ─── FULL BACKUP ─────────────────────────────────────────
