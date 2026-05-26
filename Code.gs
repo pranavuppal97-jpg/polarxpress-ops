@@ -36,6 +36,8 @@ function doPost(e) {
       case 'updateInventory':   result = logInventoryUpdate(data);break;
       case 'saveSOP':              result = saveSOP(data);              break;
       case 'logTask':              result = logTask(data);              break;
+      case 'logRegistration':      result = logRegistration(data);     break;
+      case 'listRegistrations':    result = listRegistrations();       break;
       case 'generateInvite':       result = generateInvite(data);      break;
       case 'registerDevice':       result = registerDevice(data);      break;
       case 'registerFounderDevice':result = registerFounderDevice(data);break;
@@ -207,6 +209,32 @@ function saveSOP(data) {
     data.by, new Date().toLocaleString('en-IN'),
   ]);
   return { saved: true };
+}
+
+// ─── REGISTRATIONS ───────────────────────────────────────
+
+function logRegistration(data) {
+  const sheet = getOrCreateSheet('Registrations', [
+    'Name', 'PIN', 'Password', 'Role', 'Device ID', 'Device Name', 'Registered At'
+  ]);
+  sheet.appendRow([
+    data.name, data.pin, data.password || '', data.role || 'staff',
+    data.deviceId || '', data.deviceName || '',
+    new Date().toLocaleString('en-IN'),
+  ]);
+  return { saved: true };
+}
+
+function listRegistrations() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Registrations');
+  if (!sheet || sheet.getLastRow() < 2) return { registrations: [] };
+  const rows = sheet.getDataRange().getValues().slice(1);
+  const registrations = rows.map(r => ({
+    name: r[0], pin: r[1], password: r[2], role: r[3],
+    deviceId: r[4], deviceName: r[5], registeredAt: r[6],
+  }));
+  return { registrations };
 }
 
 // ─── DEVICES & INVITES ───────────────────────────────────

@@ -111,10 +111,10 @@ function getStaffList() {
 function saveStaffList(list) { ls('staff', list); }
 
 // ─── AUTH ─────────────────────────────────────────────────
-function authenticate(pin) {
+function authenticate(credential, byPassword = false) {
   const staff = getStaffList();
-  const match = staff.find(s => s.active && s.pin === pin);
-  return match || null;
+  if (byPassword) return staff.find(s => s.active && s.password && s.password === credential) || null;
+  return staff.find(s => s.active && s.pin === credential) || null;
 }
 
 function startSession(user) {
@@ -2820,6 +2820,13 @@ function settings(main) {
       })()}
     </div>
 
+    <!-- REGISTRATIONS -->
+    <div class="settings-section">
+      <div class="settings-section-title">New Registrations</div>
+      <p style="font-size:0.83rem;color:var(--text3);margin-bottom:10px">People who self-registered via invite link. Edit their record above to assign owner role.</p>
+      <div id="registrations-list"><p style="font-size:0.83rem;color:var(--text3)">Loading…</p></div>
+    </div>
+
     <!-- DEVICE ACCESS -->
     <div class="settings-section">
       <div class="settings-section-title">Device Access</div>
@@ -2866,8 +2873,9 @@ function settings(main) {
     </div>
   `;
 
-  // Load device list asynchronously after render
+  // Load async lists after render
   loadRegisteredDevices();
+  loadRegistrations();
 }
 
 function renderStaffList(staffList) {
@@ -2879,7 +2887,8 @@ function renderStaffList(staffList) {
       </div>
       <div class="staff-info">
         <div class="staff-name">${s.name} ${isMe(s) ? '<span class="badge badge-gray" style="font-size:0.65rem">You</span>' : ''}</div>
-        <div class="staff-role">${s.phone || 'No phone'} · PIN: ${'•'.repeat(s.pin.length)}</div>
+        <div class="staff-role">${s.phone || 'No phone'}</div>
+        <div class="staff-role" style="font-size:0.75rem;color:var(--text3);margin-top:2px">PIN: <strong style="color:var(--text1)">${s.pin || '—'}</strong>${s.password ? ` · Password: <strong style="color:var(--text1)">${s.password}</strong>` : ''}</div>
       </div>
       <div class="staff-actions" style="flex-wrap:wrap">
         <span class="badge ${s.role==='owner'?'badge-accent':'badge-purple'}">${s.role}</span>
@@ -2911,7 +2920,11 @@ function showAddStaff() {
     <div class="form-group">
       <label class="form-label">PIN (4 digits)</label>
       <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="ns-pin" placeholder="e.g. 4567">
-      <p class="form-hint">Staff will use this to log in</p>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password (optional)</label>
+      <input type="text" id="ns-password" placeholder="Alternative login password">
+      <p class="form-hint">Staff can log in with PIN or password. Leave blank to use PIN only.</p>
     </div>
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -2920,15 +2933,16 @@ function showAddStaff() {
 }
 
 function saveNewStaff() {
-  const name  = el('ns-name')?.value?.trim();
-  const phone = el('ns-phone')?.value?.trim();
-  const role  = el('ns-role')?.value;
-  const pin   = el('ns-pin')?.value?.trim();
+  const name     = el('ns-name')?.value?.trim();
+  const phone    = el('ns-phone')?.value?.trim();
+  const role     = el('ns-role')?.value;
+  const pin      = el('ns-pin')?.value?.trim();
+  const password = el('ns-password')?.value?.trim() || '';
   if (!name || !pin) { toast('Name and PIN are required', 'error'); return; }
   if (pin.length !== 4) { toast('PIN must be exactly 4 digits', 'error'); return; }
   const list = getStaffList();
   if (list.find(s => s.pin === pin)) { toast('That PIN is already in use', 'error'); return; }
-  list.push({ id: 's'+Date.now().toString(36), name, phone, role, pin, active: true, createdBy: STATE.user.name, createdAt: Date.now() });
+  list.push({ id: 's'+Date.now().toString(36), name, phone, role, pin, password, active: true, createdBy: STATE.user.name, createdAt: Date.now() });
   saveStaffList(list);
   toast(`${name} added!`, 'success');
   closeModal();
@@ -2957,8 +2971,12 @@ function editStaff(id) {
       </select>
     </div>
     <div class="form-group">
-      <label class="form-label">New PIN (leave blank to keep current)</label>
-      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="es-pin" placeholder="Leave blank to keep current">
+      <label class="form-label">PIN (4 digits)</label>
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="es-pin" value="${s.pin||''}" placeholder="Leave blank to keep current">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <input type="text" id="es-password" value="${s.password||''}" placeholder="Leave blank to keep current">
     </div>
   `, `
     ${!isMe ? `<button class="btn btn-danger btn-sm" onclick="deleteStaff('${id}','${s.name.replace(/'/g,"\\'")}')">Delete</button>` : ''}
@@ -2972,9 +2990,10 @@ function updateStaff(id) {
   const s      = list.find(x => x.id === id);
   if (!s) return;
   const name   = el('es-name')?.value?.trim();
-  const phone  = el('es-phone')?.value?.trim();
-  const role   = el('es-role')?.value;
-  const newPin = el('es-pin')?.value?.trim();
+  const phone    = el('es-phone')?.value?.trim();
+  const role     = el('es-role')?.value;
+  const newPin   = el('es-pin')?.value?.trim();
+  const newPw    = el('es-password')?.value?.trim();
   if (!name) { toast('Name is required', 'error'); return; }
   if (newPin && newPin.length !== 4) { toast('PIN must be exactly 4 digits', 'error'); return; }
   if (newPin && list.find(x => x.id !== id && x.pin === newPin)) { toast('That PIN is already in use', 'error'); return; }
@@ -2984,6 +3003,7 @@ function updateStaff(id) {
   s.phone = phone;
   s.role  = role;
   if (newPin) s.pin = newPin;
+  if (newPw !== undefined) s.password = newPw;
   saveStaffList(list);
   // Update live session only if we just edited our own record
   if (newPin && editingSelf) {
@@ -3210,19 +3230,30 @@ function showFirstRun() {
         <div style="text-align:center;margin-bottom:24px">
           <div style="font-size:2.5rem;margin-bottom:8px">❄</div>
           <h2>Welcome to Polar Xpress Ops</h2>
-          <p>Let's set up your team. You can change these anytime in Settings.</p>
+          <p>Set up your owner account. You'll invite your team from Settings.</p>
         </div>
-        <div class="setup-step">
-          <p><span class="step-num">1</span><strong>Pranav's PIN</strong></p>
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin-pranav" placeholder="Enter your PIN (e.g. 1234)">
-
-          <p><span class="step-num">2</span><strong>Raj's PIN</strong></p>
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin-raj" placeholder="Raj's PIN">
-
-          <p><span class="step-num">3</span><strong>Tej's PIN</strong></p>
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin-tej" placeholder="Tej's PIN">
-
-          <button class="btn btn-primary btn-lg" style="margin-top:8px" onclick="completeSetup()">Set Up & Start</button>
+        <div class="setup-step" style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <label style="font-size:0.8rem;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Your Name</label>
+            <input type="text" id="setup-name" placeholder="e.g. Pranav" autocomplete="name" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:0.8rem;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Password</label>
+            <input type="password" id="setup-password" placeholder="Create a password" autocomplete="new-password" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:0.8rem;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Confirm Password</label>
+            <input type="password" id="setup-password2" placeholder="Confirm password" autocomplete="new-password" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:0.8rem;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">4-Digit PIN (quick login)</label>
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin" placeholder="e.g. 1234" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:0.8rem;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Confirm PIN</label>
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin2" placeholder="Confirm PIN" style="width:100%">
+          </div>
+          <button class="btn btn-primary btn-lg" style="margin-top:4px" onclick="completeSetup()">Set Up & Start</button>
         </div>
       </div>
     </div>
@@ -3230,23 +3261,24 @@ function showFirstRun() {
 }
 
 function completeSetup() {
-  const pinP = document.getElementById('setup-pin-pranav')?.value?.trim();
-  const pinR = document.getElementById('setup-pin-raj')?.value?.trim();
-  const pinT = document.getElementById('setup-pin-tej')?.value?.trim();
+  const name  = document.getElementById('setup-name')?.value?.trim();
+  const pw    = document.getElementById('setup-password')?.value;
+  const pw2   = document.getElementById('setup-password2')?.value;
+  const pin   = document.getElementById('setup-pin')?.value?.trim();
+  const pin2  = document.getElementById('setup-pin2')?.value?.trim();
 
-  if (!pinP || !pinR || !pinT) { alert('Please set a PIN for all three team members'); return; }
-  if (pinP.length !== 4 || pinR.length !== 4 || pinT.length !== 4) { alert('PINs must be exactly 4 digits'); return; }
-  const pins = [pinP, pinR, pinT];
-  if (new Set(pins).size !== 3) { alert('Each person must have a unique PIN'); return; }
+  if (!name)              { alert('Please enter your name'); return; }
+  if (!pw || pw.length < 4) { alert('Password must be at least 4 characters'); return; }
+  if (pw !== pw2)         { alert('Passwords do not match'); return; }
+  if (!pin || pin.length !== 4) { alert('PIN must be exactly 4 digits'); return; }
+  if (pin !== pin2)       { alert('PINs do not match'); return; }
 
   const staff = [
-    { id: 's1', name: 'Pranav', role: 'owner', pin: pinP, phone: '', active: true },
-    { id: 's2', name: 'Raj',    role: 'owner', pin: pinR, phone: '', active: true },
-    { id: 's3', name: 'Tej',    role: 'owner', pin: pinT, phone: '', active: true },
+    { id: 's1', name, role: 'owner', pin, password: pw, phone: '', active: true, deviceId: ensureDeviceId() },
   ];
   saveStaffList(staff);
   ls('setup_done', true);
-  ensureDeviceId(); // Mark this as the founder device (registered once Sheets URL is added)
+  ls('device_account', true); // this device's owner account is set up
   location.reload();
 }
 
@@ -4017,7 +4049,10 @@ async function autoRegisterFounderDevice() {
       }),
     });
     const data = await res.json();
-    if (data.ok && data.result?.registered) ls('device_registered', true);
+    if (data.ok && data.result?.registered) {
+      ls('device_registered', true);
+      ls('device_account', true); // founder = account already exists
+    }
   } catch {}
 }
 
@@ -4123,6 +4158,36 @@ async function loadRegisteredDevices() {
     }
   } catch {
     container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Could not reach Google Sheets.</p>';
+  }
+}
+
+async function loadRegistrations() {
+  const container = el('registrations-list');
+  if (!container) return;
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) { container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Set Google Sheets URL to see registrations.</p>'; return; }
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'listRegistrations' }),
+    });
+    const data = await res.json();
+    const regs = data.result?.registrations || [];
+    if (!regs.length) { container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">No self-registrations yet.</p>'; return; }
+    container.innerHTML = regs.map(r => `
+      <div class="card" style="margin-bottom:8px;padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
+          <div>
+            <div style="font-weight:600;font-size:0.9rem">${r.name}</div>
+            <div style="font-size:0.75rem;color:var(--text3)">${r.deviceName || ''} · ${r.registeredAt}</div>
+            <div style="font-size:0.75rem;margin-top:3px">PIN: <strong>${r.pin}</strong>${r.password ? ` · Password: <strong>${r.password}</strong>` : ''}</div>
+          </div>
+          <span class="badge badge-gray" style="align-self:flex-start">${r.role || 'staff'}</span>
+        </div>
+      </div>`).join('');
+  } catch {
+    container.innerHTML = '<p style="font-size:0.83rem;color:var(--text3)">Could not load registrations.</p>';
   }
 }
 
@@ -4296,6 +4361,65 @@ function saveODClientId() {
   toast('Client ID saved', 'success');
 }
 
+// ─── SELF-REGISTRATION ────────────────────────────────────
+
+function showRegisterScreen() {
+  el('register-screen').classList.remove('hidden');
+}
+
+async function submitRegistration() {
+  const name  = el('reg-name')?.value?.trim();
+  const pw    = el('reg-password')?.value;
+  const pw2   = el('reg-password2')?.value;
+  const pin   = el('reg-pin')?.value?.trim();
+  const pin2  = el('reg-pin2')?.value?.trim();
+
+  const showErr = msg => {
+    const err = el('reg-error');
+    err.textContent = msg;
+    err.classList.remove('hidden');
+  };
+
+  if (!name)                { showErr('Please enter your name'); return; }
+  if (!pw || pw.length < 4) { showErr('Password must be at least 4 characters'); return; }
+  if (pw !== pw2)           { showErr('Passwords do not match'); return; }
+  if (!pin || pin.length !== 4) { showErr('PIN must be exactly 4 digits'); return; }
+  if (pin !== pin2)         { showErr('PINs do not match'); return; }
+
+  // Check PIN uniqueness locally
+  const existing = getStaffList();
+  if (existing.find(s => s.pin === pin)) { showErr('That PIN is already in use — choose another'); return; }
+
+  const newMember = {
+    id: 's' + Date.now().toString(36),
+    name, role: 'staff', pin, password: pw,
+    phone: '', active: true,
+    deviceId: ensureDeviceId(),
+    deviceName: getDeviceName(),
+    createdAt: Date.now(),
+  };
+  existing.push(newMember);
+  saveStaffList(existing);
+  ls('device_account', true);
+
+  // Log registration to Sheets so owners can review
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (scriptUrl) {
+    fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'logRegistration',
+        name, pin, password: pw, role: 'staff',
+        deviceId: ls('device_id'), deviceName: getDeviceName(),
+      }),
+    }).catch(() => {});
+  }
+
+  toast('Account created! Logging in…', 'success');
+  setTimeout(() => location.reload(), 1000);
+}
+
 // ─── BOOT ────────────────────────────────────────────────
 
 async function boot() {
@@ -4309,14 +4433,23 @@ async function boot() {
     return;
   }
 
+  // Migration: devices set up before self-registration was added — mark account as done
+  if (ls('setup_done') && !ls('device_account')) ls('device_account', true);
+
   // Check device registration (only enforced when Sheets URL is set)
   const access = await checkDeviceAccess();
   if (access === 'restricted') {
-    showAccessScreen('Ask Pranav, Raj, or Tej to send you an invite link to register this device.');
+    showAccessScreen('Ask an owner to send you an invite link to register this device.');
     return;
   }
   if (access === 'invalid_invite') {
     showAccessScreen('This invite link is invalid or has already been used. Ask for a new one.');
+    return;
+  }
+
+  // If invite was just validated but account not yet created → show registration form
+  if (ls('device_registered') && !ls('device_account')) {
+    showRegisterScreen();
     return;
   }
 
@@ -4332,48 +4465,79 @@ async function boot() {
 function showLoginScreen() {
   el('login-screen').classList.remove('hidden');
 
-  // PIN pad
-  let pin = '';
-  const updateDots = () => {
-    document.querySelectorAll('.pin-dots span').forEach((dot, i) => {
-      dot.classList.toggle('filled', i < pin.length);
-    });
+  let usingPassword = false;
+
+  const pinDisplay  = el('pin-dots').parentElement;  // .pin-display
+  const pinPad      = document.querySelector('.pin-pad');
+  const hintEl      = document.querySelector('.login-hint');
+  const pwSection   = el('pw-section');
+  const toggleBtn   = el('toggle-pw-btn');
+
+  const doLogin = (user) => {
+    startSession(user);
+    el('login-screen').classList.add('hidden');
+    showApp();
   };
   const showError = (msg) => {
     const err = el('login-error');
     err.textContent = msg;
     err.classList.remove('hidden');
     setTimeout(() => err.classList.add('hidden'), 2500);
-    pin = '';
-    updateDots();
+    if (!usingPassword) { pin = ''; updateDots(); }
   };
-  const tryLogin = () => {
+
+  // ── PIN mode ──
+  let pin = '';
+  const updateDots = () => {
+    document.querySelectorAll('.pin-dots span').forEach((dot, i) => {
+      dot.classList.toggle('filled', i < pin.length);
+    });
+  };
+  const tryPinLogin = () => {
     if (pin.length < 4) { showError('PIN must be exactly 4 digits'); return; }
     const user = authenticate(pin);
-    if (user) {
-      startSession(user);
-      el('login-screen').classList.add('hidden');
-      showApp();
-    } else {
-      showError('Invalid PIN — try again');
-    }
+    if (user) doLogin(user); else showError('Invalid PIN — try again');
   };
 
   document.querySelectorAll('.pin-btn[data-digit]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (pin.length >= 4) return;
-      pin += btn.dataset.digit;
-      updateDots();
-      if (pin.length === 4) tryLogin();
+      if (usingPassword || pin.length >= 4) return;
+      pin += btn.dataset.digit; updateDots();
+      if (pin.length === 4) tryPinLogin();
     });
   });
-  el('pin-clear').addEventListener('click', () => { pin = pin.slice(0,-1); updateDots(); });
-  el('pin-enter').addEventListener('click', tryLogin);
+  el('pin-clear').addEventListener('click', () => { if (!usingPassword) { pin = pin.slice(0,-1); updateDots(); } });
+  el('pin-enter').addEventListener('click', () => { if (!usingPassword) tryPinLogin(); });
   document.addEventListener('keydown', (e) => {
     if (el('login-screen').classList.contains('hidden')) return;
-    if (e.key >= '0' && e.key <= '9') { if (pin.length < 4) { pin+=e.key; updateDots(); if(pin.length===4) tryLogin(); } }
-    else if (e.key === 'Backspace') { pin=pin.slice(0,-1); updateDots(); }
-    else if (e.key === 'Enter') tryLogin();
+    if (usingPassword) {
+      if (e.key === 'Enter') tryPasswordLogin();
+    } else {
+      if (e.key >= '0' && e.key <= '9') { if (pin.length < 4) { pin+=e.key; updateDots(); if(pin.length===4) tryPinLogin(); } }
+      else if (e.key === 'Backspace') { pin=pin.slice(0,-1); updateDots(); }
+      else if (e.key === 'Enter') tryPinLogin();
+    }
+  });
+
+  // ── Password mode ──
+  const tryPasswordLogin = () => {
+    const pw = el('pw-input')?.value;
+    if (!pw) { showError('Enter your password'); return; }
+    const user = authenticate(pw, true);
+    if (user) doLogin(user); else showError('Invalid password — try again');
+  };
+  el('pw-login-btn').addEventListener('click', tryPasswordLogin);
+
+  // ── Toggle between modes ──
+  toggleBtn.addEventListener('click', () => {
+    usingPassword = !usingPassword;
+    pinDisplay.classList.toggle('hidden', usingPassword);
+    pinPad.classList.toggle('hidden', usingPassword);
+    hintEl.classList.toggle('hidden', usingPassword);
+    pwSection.classList.toggle('hidden', !usingPassword);
+    toggleBtn.textContent = usingPassword ? '← Use PIN instead' : 'Use password instead';
+    if (usingPassword) el('pw-input')?.focus();
+    else { pin = ''; updateDots(); }
   });
 }
 
@@ -4515,6 +4679,7 @@ window.removeIngredientRow = removeIngredientRow;
 window.backupAll = backupAll;
 window.restoreFromBackup = restoreFromBackup;
 window.runManualBackup = runManualBackup;
+window.submitRegistration = submitRegistration;
 window.generateInviteLink = generateInviteLink;
 window.createInvite = createInvite;
 window.copyInviteLink = copyInviteLink;
