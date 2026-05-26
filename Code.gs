@@ -33,6 +33,7 @@ function doPost(e) {
       case 'logExpense':        result = logExpense(data);        break;
       case 'updateInventory':   result = logInventoryUpdate(data);break;
       case 'saveSOP':           result = saveSOP(data);          break;
+      case 'logTask':           result = logTask(data);          break;
       case 'fullBackup':        result = saveFullBackup(data);   break;
       case 'getLatestBackup':   result = getLatestBackup();      break;
       default:
@@ -171,6 +172,19 @@ function logInventoryUpdate(data) {
     data.date, data.name, data.oldStock, data.newStock,
     data.unit, data.note || '',
     data.by, new Date().toLocaleString('en-IN'),
+  ]);
+  return { saved: true };
+}
+
+// ─── TASKS ───────────────────────────────────────────────
+function logTask(data) {
+  const sheet = getOrCreateSheet('Task_Log', [
+    'Date', 'Shift', 'Template ID', 'Title', 'Done By', 'Done At', 'Timestamp'
+  ]);
+  sheet.appendRow([
+    data.date, data.shift || '', data.templateId || '',
+    data.title, data.doneBy, data.doneAt,
+    new Date().toLocaleString('en-IN'),
   ]);
   return { saved: true };
 }

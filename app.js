@@ -605,6 +605,9 @@ const DEFAULT_SOPS = [
 
 // ─── ROUTER ──────────────────────────────────────────────
 function navigate(page) {
+  // Refresh today's date in case the app was left open overnight
+  STATE.today = todayStr();
+
   // Close any open overlays
   el('more-overlay').classList.add('hidden');
   el('modal-overlay').classList.add('hidden');
@@ -893,8 +896,7 @@ function sales(main) {
     </div>
   `;
 
-  // Default row
-  addSalesRow(staffList[0]?.name || '');
+  salesRowCount = 0;
 
   // Wire up live totals
   el('sales-date').addEventListener('change', loadSalesForDate);
@@ -902,11 +904,12 @@ function sales(main) {
   el('edc-orders').addEventListener('input', updateSalesTotals);
   el('edc-amount').addEventListener('input', updateSalesTotals);
 
-  loadSalesForDate();
+  // Silently load saved data (or add fresh default row)
+  loadSalesForDate(true);
 }
 
 let salesRowCount = 0;
-function addSalesRow(defaultName = '') {
+function addSalesRow(defaultName = '', silent = false) {
   salesRowCount++;
   const id = 'sr' + salesRowCount;
   const staffList = getStaffList().filter(s => s.active);
@@ -986,19 +989,23 @@ function updateSalesTotals() {
   el('sales-totals-box').style.display = (orders || total) ? 'flex' : 'none';
 }
 
-function loadSalesForDate() {
+function loadSalesForDate(silent = false) {
   const date = el('sales-date')?.value;
   if (!date) return;
+  const staffList = getStaffList().filter(s => s.active);
   const existing = getSalesLog().filter(s => s.date === date);
+
+  // Always reset rows so switching dates never shows stale data
+  el('sales-rows').innerHTML = '';
+  salesRowCount = 0;
+  el('edc-orders').value = '';
+  el('edc-amount').value = '';
+
   if (existing.length) {
-    toast(`Loading saved data for ${formatDate(date)}`, 'info');
-    // Clear rows and repopulate
-    el('sales-rows').innerHTML = '';
-    salesRowCount = 0;
+    if (!silent) toast(`Loaded saved data for ${formatDate(date)}`, 'info');
     existing.filter(e => e.billingUser !== 'Mosambee EDC').forEach(e => {
       addSalesRow(e.billingUser);
-      const rows = el('sales-rows');
-      const lastRow = rows.lastElementChild;
+      const lastRow = el('sales-rows').lastElementChild;
       if (lastRow) {
         const setVal = (cls, v) => { const inp = lastRow.querySelector(cls); if(inp) inp.value = v||''; };
         const sel = lastRow.querySelector('select');
@@ -1018,8 +1025,11 @@ function loadSalesForDate() {
       el('edc-orders').value = edc.orders || '';
       el('edc-amount').value = edc.totalSales || '';
     }
-    updateSalesTotals();
+  } else {
+    // No saved data — add one fresh default row
+    addSalesRow(staffList[0]?.name || '');
   }
+  updateSalesTotals();
 }
 
 async function submitSales() {
@@ -2498,7 +2508,8 @@ function switchManageTab(tab) {
 function renderManageInventory(inv) {
   if (!inv || !inv.length) return `<div class="empty-state"><div class="empty-state-icon">📦</div><h3>No items yet</h3><p>Tap "+ Add Item" to add your first inventory item</p></div>`;
   return inv.map(i => {
-    const status = i.stock <= i.reorder ? 'low' : i.stock <= i.reorder * 1.5 ? 'medium' : 'ok';
+    const hasReorder = i.reorder > 0;
+    const status = (hasReorder && i.stock <= i.reorder) ? 'low' : (hasReorder && i.stock <= i.reorder * 1.5) ? 'medium' : 'ok';
     const badgeClass = status === 'low' ? 'badge-red' : status === 'medium' ? 'badge-yellow' : 'badge-green';
     return `
       <div class="manage-item-row" id="mrow-${i.id}">
@@ -2640,10 +2651,10 @@ function deleteInventoryItem(id, name) {
   const inv = getInventory().filter(i => i.id !== id);
   saveInventory(inv);
   toast(`${name} deleted`, 'info');
-  // Remove row without full re-render
+  // Remove row without full re-render; fall back to originating page
   const row = el('mrow-' + id);
   if (row) row.remove();
-  else navigate('manage');
+  else navigate(STATE.page || 'manage');
 }
 
 // ── MANAGE: EXPENSES ───────────────────────────────────────
@@ -2847,7 +2858,7 @@ function showAddStaff() {
     </div>
     <div class="form-group">
       <label class="form-label">PIN (4 digits)</label>
-      <input type="number" id="ns-pin" placeholder="e.g. 4567" maxlength="6">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="ns-pin" placeholder="e.g. 4567">
       <p class="form-hint">Staff will use this to log in</p>
     </div>
   `, `
@@ -2895,7 +2906,7 @@ function editStaff(id) {
     </div>
     <div class="form-group">
       <label class="form-label">New PIN (leave blank to keep current)</label>
-      <input type="number" id="es-pin" placeholder="Leave blank to keep current">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="es-pin" placeholder="Leave blank to keep current">
     </div>
   `, `
     ${!isMe ? `<button class="btn btn-danger btn-sm" onclick="deleteStaff('${id}','${s.name.replace(/'/g,"\\'")}')">Delete</button>` : ''}
@@ -2962,15 +2973,15 @@ function showChangePin() {
   showModal('Change Your PIN', `
     <div class="form-group">
       <label class="form-label">Current PIN</label>
-      <input type="number" id="cp-current" placeholder="Current PIN">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="cp-current" placeholder="Current PIN">
     </div>
     <div class="form-group">
       <label class="form-label">New PIN</label>
-      <input type="number" id="cp-new" placeholder="New 4-6 digit PIN">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="cp-new" placeholder="New 4-digit PIN">
     </div>
     <div class="form-group">
       <label class="form-label">Confirm New PIN</label>
-      <input type="number" id="cp-confirm" placeholder="Repeat new PIN">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="cp-confirm" placeholder="Repeat new PIN">
     </div>
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -2981,10 +2992,10 @@ function showChangePin() {
 function changePin() {
   const current = el('cp-current')?.value;
   const newPin  = el('cp-new')?.value;
-  const confirm = el('cp-confirm')?.value;
+  const confirmPin = el('cp-confirm')?.value;
   if (current !== STATE.user.pin) { toast('Current PIN is incorrect', 'error'); return; }
   if (!newPin || newPin.length !== 4) { toast('New PIN must be exactly 4 digits', 'error'); return; }
-  if (newPin !== confirm) { toast('PINs do not match', 'error'); return; }
+  if (newPin !== confirmPin) { toast('PINs do not match', 'error'); return; }
   const list = getStaffList();
   const me = list.find(s => s.pin === STATE.user.pin);
   if (me) {
@@ -3150,13 +3161,13 @@ function showFirstRun() {
         </div>
         <div class="setup-step">
           <p><span class="step-num">1</span><strong>Pranav's PIN</strong></p>
-          <input type="number" id="setup-pin-pranav" placeholder="Enter your PIN (e.g. 1234)" maxlength="6">
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin-pranav" placeholder="Enter your PIN (e.g. 1234)">
 
           <p><span class="step-num">2</span><strong>Raj's PIN</strong></p>
-          <input type="number" id="setup-pin-raj" placeholder="Raj's PIN" maxlength="6">
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin-raj" placeholder="Raj's PIN">
 
           <p><span class="step-num">3</span><strong>Tej's PIN</strong></p>
-          <input type="number" id="setup-pin-tej" placeholder="Tej's PIN" maxlength="6">
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="setup-pin-tej" placeholder="Tej's PIN">
 
           <button class="btn btn-primary btn-lg" style="margin-top:8px" onclick="completeSetup()">Set Up & Start</button>
         </div>
