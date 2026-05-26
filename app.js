@@ -2846,7 +2846,7 @@ function showAddStaff() {
       </select>
     </div>
     <div class="form-group">
-      <label class="form-label">PIN (4-6 digits)</label>
+      <label class="form-label">PIN (4 digits)</label>
       <input type="number" id="ns-pin" placeholder="e.g. 4567" maxlength="6">
       <p class="form-hint">Staff will use this to log in</p>
     </div>
@@ -2862,7 +2862,7 @@ function saveNewStaff() {
   const role  = el('ns-role')?.value;
   const pin   = el('ns-pin')?.value?.trim();
   if (!name || !pin) { toast('Name and PIN are required', 'error'); return; }
-  if (pin.length < 4) { toast('PIN must be at least 4 digits', 'error'); return; }
+  if (pin.length !== 4) { toast('PIN must be exactly 4 digits', 'error'); return; }
   const list = getStaffList();
   if (list.find(s => s.pin === pin)) { toast('That PIN is already in use', 'error'); return; }
   list.push({ id: 's'+Date.now().toString(36), name, phone, role, pin, active: true, createdBy: STATE.user.name, createdAt: Date.now() });
@@ -2913,7 +2913,7 @@ function updateStaff(id) {
   const role   = el('es-role')?.value;
   const newPin = el('es-pin')?.value?.trim();
   if (!name) { toast('Name is required', 'error'); return; }
-  if (newPin && newPin.length < 4) { toast('PIN must be at least 4 digits', 'error'); return; }
+  if (newPin && newPin.length !== 4) { toast('PIN must be exactly 4 digits', 'error'); return; }
   if (newPin && list.find(x => x.id !== id && x.pin === newPin)) { toast('That PIN is already in use', 'error'); return; }
   // Capture whether we're editing ourselves BEFORE changing the pin
   const editingSelf = s.pin === STATE.user.pin;
@@ -2983,7 +2983,7 @@ function changePin() {
   const newPin  = el('cp-new')?.value;
   const confirm = el('cp-confirm')?.value;
   if (current !== STATE.user.pin) { toast('Current PIN is incorrect', 'error'); return; }
-  if (!newPin || newPin.length < 4) { toast('New PIN must be at least 4 digits', 'error'); return; }
+  if (!newPin || newPin.length !== 4) { toast('New PIN must be exactly 4 digits', 'error'); return; }
   if (newPin !== confirm) { toast('PINs do not match', 'error'); return; }
   const list = getStaffList();
   const me = list.find(s => s.pin === STATE.user.pin);
@@ -3171,7 +3171,7 @@ function completeSetup() {
   const pinT = document.getElementById('setup-pin-tej')?.value?.trim();
 
   if (!pinP || !pinR || !pinT) { alert('Please set a PIN for all three team members'); return; }
-  if (pinP.length < 4 || pinR.length < 4 || pinT.length < 4) { alert('PINs must be at least 4 digits'); return; }
+  if (pinP.length !== 4 || pinR.length !== 4 || pinT.length !== 4) { alert('PINs must be exactly 4 digits'); return; }
   const pins = [pinP, pinR, pinT];
   if (new Set(pins).size !== 3) { alert('Each person must have a unique PIN'); return; }
 
@@ -3908,7 +3908,7 @@ function boot() {
     updateDots();
   };
   const tryLogin = () => {
-    if (pin.length < 4) { showError('PIN must be at least 4 digits'); return; }
+    if (pin.length < 4) { showError('PIN must be exactly 4 digits'); return; }
     const user = authenticate(pin);
     if (user) {
       startSession(user);
@@ -3921,17 +3921,17 @@ function boot() {
 
   document.querySelectorAll('.pin-btn[data-digit]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (pin.length >= 6) return;
+      if (pin.length >= 4) return;
       pin += btn.dataset.digit;
       updateDots();
-      if (pin.length === 6) tryLogin();
+      if (pin.length === 4) tryLogin();
     });
   });
   el('pin-clear').addEventListener('click', () => { pin = pin.slice(0,-1); updateDots(); });
   el('pin-enter').addEventListener('click', tryLogin);
   document.addEventListener('keydown', (e) => {
     if (el('login-screen').classList.contains('hidden')) return;
-    if (e.key >= '0' && e.key <= '9') { if (pin.length < 6) { pin+=e.key; updateDots(); if(pin.length===6) tryLogin(); } }
+    if (e.key >= '0' && e.key <= '9') { if (pin.length < 4) { pin+=e.key; updateDots(); if(pin.length===4) tryLogin(); } }
     else if (e.key === 'Backspace') { pin=pin.slice(0,-1); updateDots(); }
     else if (e.key === 'Enter') tryLogin();
   });
