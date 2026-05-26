@@ -2780,8 +2780,8 @@ function settings(main) {
       </div>
       <div class="settings-row" onclick="exportData()">
         <div class="settings-row-left">
-          <span class="settings-row-label">Export Data</span>
-          <span class="settings-row-sub">Download sales, expenses & attendance as CSV</span>
+          <span class="settings-row-label">Export to Excel</span>
+          <span class="settings-row-sub">Download all data as a formatted .xlsx file (7 sheets)</span>
         </div>
         <span class="settings-row-right">›</span>
       </div>
@@ -3014,19 +3014,118 @@ async function syncNow() {
 }
 
 function exportData() {
-  const sales = getSalesLog();
-  const expenses = getExpenses();
-  const attendance = getAttendanceLog();
-  let csv = 'TYPE,DATE,DETAILS,AMOUNT\n';
-  sales.forEach(s => csv += `SALES,${s.date},"${s.billingUser} - ${s.orders} orders",${s.totalSales}\n`);
-  expenses.forEach(e => csv += `EXPENSE,${e.date},"${e.category}: ${e.description}",-${e.amount}\n`);
-  attendance.filter(a=>a.clockIn).forEach(a => csv += `ATTENDANCE,${a.date},"${a.name} ${a.clockIn}-${a.clockOut||'open'}",${a.hours||''}\n`);
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `polarxpress-data-${STATE.today}.csv`;
-  a.click(); URL.revokeObjectURL(url);
-  toast('Data exported!', 'success');
+  if (typeof XLSX === 'undefined') {
+    toast('Excel library not loaded — check internet and try again', 'error');
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+  const num = v => parseFloat(v) || 0;
+
+  // ── helper: build a worksheet with auto column widths ──────
+  function ws(headers, rows) {
+    const data = [headers, ...rows];
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    sheet['!cols'] = headers.map((h, i) => {
+      const maxLen = Math.max(h.length, ...rows.map(r => String(r[i] ?? '').length));
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 45) };
+    });
+    sheet['!freeze'] = { xSplit: 0, ySplit: 1 };
+    return sheet;
+  }
+
+  // ── 1. DAILY SALES ────────────────────────────────────────
+  const sales = getSalesLog().slice().sort((a,b) => b.date.localeCompare(a.date));
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Date','Billing User','Orders','Net Sales (₹)','Total Sales (₹)','Cash (₹)','Card (₹)','UPI (₹)','Other (₹)','Waived (₹)','Not Paid (₹)','Submitted By'],
+    sales.map(s => [
+      s.date, s.billingUser||'',
+      num(s.orders), num(s.netSales), num(s.totalSales),
+      num(s.cash), num(s.card), num(s.upi), num(s.other),
+      num(s.waived), num(s.notPaid),
+      s.submittedBy||'',
+    ])
+  ), 'Daily Sales');
+
+  // ── 2. EXPENSES ───────────────────────────────────────────
+  const expenses = getExpenses().slice().sort((a,b) => b.date.localeCompare(a.date));
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Date','Category','Description','Amount (₹)','Paid By','Bill Ref','Added By'],
+    expenses.map(e => [
+      e.date, e.category||'', e.description||'',
+      num(e.amount), e.paidBy||'', e.ref||'', e.addedBy||'',
+    ])
+  ), 'Expenses');
+
+  // ── 3. CASH RECONCILIATION ────────────────────────────────
+  const recon = getReconLog().slice().sort((a,b) => b.date.localeCompare(a.date));
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Date','Time','Total Counted (₹)','Expected (₹)','Difference (₹)','₹500','₹200','₹100','₹50','₹20','₹10','₹5','₹2','₹1','Coins','Notes','By'],
+    recon.map(r => [
+      r.date, r.time||'',
+      num(r.counted), num(r.expected), num(r.difference),
+      num(r.note_500), num(r.note_200), num(r.note_100), num(r.note_50),
+      num(r.note_20), num(r.note_10), num(r.note_5), num(r.note_2), num(r.note_1),
+      num(r.coins), r.notes||'', r.by||'',
+    ])
+  ), 'Cash Reconciliation');
+
+  // ── 4. ATTENDANCE ─────────────────────────────────────────
+  const att = getAttendanceLog().filter(a => a.clockIn).slice().sort((a,b) => b.date.localeCompare(a.date));
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Date','Staff Name','Clock In','Clock Out','Hours','Notes','Edited By'],
+    att.map(a => [
+      a.date, a.name||'', a.clockIn||'', a.clockOut||'',
+      num(a.hours), a.notes||'', a.editedBy||'',
+    ])
+  ), 'Attendance');
+
+  // ── 5. INVENTORY ──────────────────────────────────────────
+  const inv = getInventory().slice().sort((a,b) => (a.section+a.name).localeCompare(b.section+b.name));
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Section','Category','Item Name','SKU','Unit','Stock (qty)','Reorder Level','Unit Cost (₹)','Tax (₹)','Total Cost (₹)','Supplier','Contact'],
+    inv.map(i => [
+      i.section||'', i.category||'', i.name||'', i.sku||'', i.unit||'',
+      num(i.stock), num(i.reorder),
+      num(i.price), num(i.tax), num(i.totalCost),
+      i.supplier||'', i.contact||'',
+    ])
+  ), 'Inventory');
+
+  // ── 6. VENDORS ────────────────────────────────────────────
+  const vendors = getVendors().slice().sort((a,b) => a.name.localeCompare(b.name));
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Vendor Name','Contact Person','Phone','Email','Supplies','Notes'],
+    vendors.map(v => [
+      v.name||'', v.contact||'', v.phone||'', v.email||'',
+      v.categories||'', v.notes||'',
+    ])
+  ), 'Vendors');
+
+  // ── 7. MONTHLY SUMMARY ────────────────────────────────────
+  const allMonths = [...new Set([
+    ...getSalesLog().map(s => s.date.slice(0,7)),
+    ...getExpenses().map(e => e.date.slice(0,7)),
+  ])].sort().reverse();
+  const summaryRows = allMonths.map(m => {
+    const mSales   = getSalesLog().filter(s => s.date.startsWith(m));
+    const mExp     = getExpenses().filter(e => e.date.startsWith(m));
+    const revenue  = mSales.reduce((s,e) => s + num(e.totalSales), 0);
+    const cash     = mSales.reduce((s,e) => s + num(e.cash), 0);
+    const card     = mSales.reduce((s,e) => s + num(e.card), 0);
+    const upi      = mSales.reduce((s,e) => s + num(e.upi), 0);
+    const expTotal = mExp.reduce((s,e) => s + num(e.amount), 0);
+    return [m, revenue, cash, card, upi, expTotal, revenue - expTotal];
+  });
+  XLSX.utils.book_append_sheet(wb, ws(
+    ['Month','Total Revenue (₹)','Cash (₹)','Card (₹)','UPI (₹)','Total Expenses (₹)','Net (₹)'],
+    summaryRows
+  ), 'Monthly Summary');
+
+  // ── Write file ────────────────────────────────────────────
+  const filename = `PolarXpress-Export-${STATE.today}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  toast('Excel file downloaded!', 'success');
 }
 
 function clearTodayData() {
