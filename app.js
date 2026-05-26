@@ -4364,11 +4364,136 @@ function saveODClientId() {
 // ─── SELF-REGISTRATION ────────────────────────────────────
 
 function showRegisterScreen() {
-  el('register-screen').classList.remove('hidden');
-  // Clear error whenever user changes any field
-  ['reg-name','reg-password','reg-password2','reg-pin','reg-pin2'].forEach(id => {
-    el(id)?.addEventListener('input', () => el('reg-error')?.classList.add('hidden'));
+  const screen = el('register-screen');
+  screen.classList.remove('hidden');
+  screen.innerHTML = `
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-icon">❄</div>
+        <h1 id="reg-title">Create Your Account</h1>
+        <p id="reg-subtitle">You've been invited to Polar Xpress Ops</p>
+      </div>
+      <div id="reg-error" class="login-error hidden"></div>
+
+      <!-- NEW ACCOUNT -->
+      <div id="reg-new-form" style="display:flex;flex-direction:column;gap:10px">
+        <input type="text" id="reg-name" placeholder="Your full name" autocomplete="name" style="width:100%">
+        <input type="password" id="reg-password" placeholder="Create a password" autocomplete="new-password" style="width:100%">
+        <input type="password" id="reg-password2" placeholder="Confirm password" autocomplete="new-password" style="width:100%">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="reg-pin" placeholder="4-digit PIN (quick login)" style="width:100%">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="reg-pin2" placeholder="Confirm PIN" style="width:100%">
+        <button class="btn btn-primary" style="width:100%;margin-top:4px" onclick="submitRegistration()">Join Team</button>
+        <p style="font-size:0.78rem;color:var(--text3);text-align:center">Your role will be assigned by an owner</p>
+        <button onclick="showClaimForm()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:0.85rem;text-align:center;padding:4px">Already have an account on another device? →</button>
+      </div>
+
+      <!-- CLAIM EXISTING ACCOUNT -->
+      <div id="reg-claim-form" style="display:none;flex-direction:column;gap:10px">
+        <p style="font-size:0.85rem;color:var(--text2);margin:0">Enter your existing PIN or password to register this device. Requires Sheets to be set up.</p>
+        <input type="text" id="claim-credential" placeholder="Your PIN or password" autocomplete="current-password" style="width:100%">
+        <button class="btn btn-primary" style="width:100%" onclick="claimExistingAccount()">Register This Device</button>
+        <button onclick="showNewRegForm()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:0.85rem;text-align:center;padding:4px">← New to the team? Create account</button>
+      </div>
+    </div>`;
+
+  const clearErr = () => el('reg-error')?.classList.add('hidden');
+  ['reg-name','reg-password','reg-password2','reg-pin','reg-pin2','claim-credential'].forEach(id => {
+    el(id)?.addEventListener('input', clearErr);
   });
+}
+
+function showClaimForm() {
+  el('reg-new-form').style.display  = 'none';
+  el('reg-claim-form').style.display = 'flex';
+  el('reg-title').textContent    = 'Register This Device';
+  el('reg-subtitle').textContent = 'Sign in with your existing account';
+  el('claim-credential')?.focus();
+}
+
+function showNewRegForm() {
+  el('reg-claim-form').style.display = 'none';
+  el('reg-new-form').style.display   = 'flex';
+  el('reg-title').textContent    = 'Create Your Account';
+  el('reg-subtitle').textContent = "You've been invited to Polar Xpress Ops";
+}
+
+function regErr(msg) {
+  const err = el('reg-error');
+  if (!err) return;
+  err.textContent = msg;
+  err.classList.remove('hidden');
+}
+
+async function syncStaffFromBackup() {
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) return false;
+  try {
+    const res  = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'getLatestBackup' }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.result?.found) return false;
+    const snapshot   = JSON.parse(data.result.backupJson);
+    if (!snapshot.staff) return false;
+    const backupStaff = JSON.parse(snapshot.staff);
+    // Merge: backup staff is the source of truth; keep any local-only records too
+    const local  = getStaffList();
+    const merged = [...backupStaff];
+    local.forEach(lm => { if (!merged.find(m => m.id === lm.id)) merged.push(lm); });
+    saveStaffList(merged);
+    return true;
+  } catch { return false; }
+}
+
+async function claimExistingAccount() {
+  const credential = el('claim-credential')?.value?.trim();
+  if (!credential) { regErr('Enter your PIN or password'); return; }
+
+  const btn = el('claim-credential')?.nextElementSibling;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) {
+    regErr('Google Sheets URL not configured — ask an owner to set it up, then try again');
+    if (btn) { btn.disabled = false; btn.textContent = 'Register This Device'; }
+    return;
+  }
+
+  try {
+    const res  = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'getLatestBackup' }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.result?.found) {
+      regErr('No cloud backup found yet — ask an owner to do a backup first, then try again');
+      if (btn) { btn.disabled = false; btn.textContent = 'Register This Device'; }
+      return;
+    }
+    const snapshot   = JSON.parse(data.result.backupJson);
+    const staffRaw   = snapshot.staff;
+    if (!staffRaw) { regErr('No staff data in backup'); if (btn) { btn.disabled = false; btn.textContent = 'Register This Device'; } return; }
+    const backupStaff = JSON.parse(staffRaw);
+
+    const match = backupStaff.find(s => s.active && (s.pin === credential || (s.password && s.password === credential)));
+    if (!match) {
+      regErr('Credential not recognised — check your PIN or password');
+      if (btn) { btn.disabled = false; btn.textContent = 'Register This Device'; }
+      return;
+    }
+
+    // Restore full staff list so everyone can log in on this device
+    saveStaffList(backupStaff);
+    ls('device_account', true);
+    toast(`Welcome back, ${match.name}! Logging in…`, 'success');
+    setTimeout(() => location.reload(), 1200);
+  } catch {
+    regErr('Could not reach Google Sheets — check your internet connection');
+    if (btn) { btn.disabled = false; btn.textContent = 'Register This Device'; }
+  }
 }
 
 async function submitRegistration() {
@@ -4378,35 +4503,29 @@ async function submitRegistration() {
   const pin   = el('reg-pin')?.value?.trim();
   const pin2  = el('reg-pin2')?.value?.trim();
 
-  const showErr = msg => {
-    const err = el('reg-error');
-    err.textContent = msg;
-    err.classList.remove('hidden');
-  };
+  if (!name)                { regErr('Please enter your name'); return; }
+  if (!pw || pw.length < 4) { regErr('Password must be at least 4 characters'); return; }
+  if (pw !== pw2)           { regErr('Passwords do not match'); return; }
+  if (!pin || pin.length !== 4) { regErr('PIN must be exactly 4 digits'); return; }
+  if (pin !== pin2)         { regErr('PINs do not match'); return; }
 
-  if (!name)                { showErr('Please enter your name'); return; }
-  if (!pw || pw.length < 4) { showErr('Password must be at least 4 characters'); return; }
-  if (pw !== pw2)           { showErr('Passwords do not match'); return; }
-  if (!pin || pin.length !== 4) { showErr('PIN must be exactly 4 digits'); return; }
-  if (pin !== pin2)         { showErr('PINs do not match'); return; }
+  // Try to sync existing staff list first so this device has everyone
+  await syncStaffFromBackup();
 
-  // Check PIN uniqueness locally
   const existing = getStaffList();
-  if (existing.find(s => s.pin === pin)) { showErr('That PIN is already in use — choose another'); return; }
+  if (existing.find(s => s.pin === pin)) { regErr('That PIN is already in use — choose another'); return; }
 
   const newMember = {
     id: 's' + Date.now().toString(36),
     name, role: 'staff', pin, password: pw,
     phone: '', active: true,
-    deviceId: ensureDeviceId(),
-    deviceName: getDeviceName(),
-    createdAt: Date.now(),
+    deviceId: ensureDeviceId(), deviceName: getDeviceName(), createdAt: Date.now(),
   };
   existing.push(newMember);
   saveStaffList(existing);
   ls('device_account', true);
 
-  // Log registration to Sheets so owners can review
+  // Log to Sheets so owners can review
   const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
   if (scriptUrl) {
     fetch(scriptUrl, {
@@ -4688,6 +4807,9 @@ window.backupAll = backupAll;
 window.restoreFromBackup = restoreFromBackup;
 window.runManualBackup = runManualBackup;
 window.submitRegistration = submitRegistration;
+window.showClaimForm = showClaimForm;
+window.showNewRegForm = showNewRegForm;
+window.claimExistingAccount = claimExistingAccount;
 window.generateInviteLink = generateInviteLink;
 window.createInvite = createInvite;
 window.copyInviteLink = copyInviteLink;
