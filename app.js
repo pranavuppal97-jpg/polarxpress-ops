@@ -4030,10 +4030,187 @@ async function checkDeviceAccess() {
   return 'invalid_invite';
 }
 
-function showAccessScreen(msg) {
-  el('access-screen').classList.remove('hidden');
-  if (msg) el('access-msg').textContent = msg;
+function showNewDeviceScreen(errorMsg) {
+  const screen = el('access-screen');
+  screen.classList.remove('hidden');
+  screen.innerHTML = `
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-icon">❄</div>
+        <h1>Polar Xpress</h1>
+        <p>Operations System</p>
+      </div>
+
+      <div class="tabs" style="width:100%">
+        <button class="tab-btn active" id="nd-tab-login" onclick="ndShowTab('login')">Log In</button>
+        <button class="tab-btn" id="nd-tab-signup" onclick="ndShowTab('signup')">Sign Up</button>
+      </div>
+
+      <div id="nd-error" class="login-error${errorMsg ? '' : ' hidden'}" style="width:100%">${errorMsg || ''}</div>
+
+      <!-- LOG IN panel -->
+      <div id="nd-login-panel" style="width:100%;display:flex;flex-direction:column;align-items:center;gap:16px">
+        <div class="pin-display" style="width:100%">
+          <div class="pin-dots" id="nd-pin-dots">
+            <span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="pin-pad" style="width:100%">
+          <button class="pin-btn" data-nddigit="1">1</button>
+          <button class="pin-btn" data-nddigit="2">2</button>
+          <button class="pin-btn" data-nddigit="3">3</button>
+          <button class="pin-btn" data-nddigit="4">4</button>
+          <button class="pin-btn" data-nddigit="5">5</button>
+          <button class="pin-btn" data-nddigit="6">6</button>
+          <button class="pin-btn" data-nddigit="7">7</button>
+          <button class="pin-btn" data-nddigit="8">8</button>
+          <button class="pin-btn" data-nddigit="9">9</button>
+          <button class="pin-btn pin-clear" id="nd-pin-clear">⌫</button>
+          <button class="pin-btn" data-nddigit="0">0</button>
+          <button class="pin-btn pin-enter" id="nd-pin-enter">→</button>
+        </div>
+        <p style="font-size:0.82rem;color:var(--text3);margin:0">Enter your PIN to continue</p>
+        <div id="nd-pw-section" class="hidden" style="width:100%;display:flex;flex-direction:column;gap:10px">
+          <input type="password" id="nd-pw-input" placeholder="Enter your password" autocomplete="current-password" style="width:100%">
+          <button class="btn btn-primary" style="width:100%" id="nd-pw-btn">Log In</button>
+        </div>
+        <button id="nd-toggle-pw" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:0.85rem">Use password instead</button>
+      </div>
+
+      <!-- SIGN UP panel -->
+      <div id="nd-signup-panel" style="width:100%;display:none;flex-direction:column;gap:12px">
+        <p style="font-size:0.85rem;color:var(--text2);margin:0;text-align:center">Paste the invite link sent by an owner to join the team.</p>
+        <input type="text" id="nd-invite-input" placeholder="Paste invite link here" autocomplete="off" style="width:100%">
+        <button class="btn btn-primary" style="width:100%" onclick="ndSubmitInvite()">Continue →</button>
+        <p style="font-size:0.78rem;color:var(--text3);text-align:center;margin:0">Don't have an invite? Ask Pranav, Raj, or Tej.</p>
+      </div>
+    </div>`;
+
+  let usingPassword = false;
+  let pin = '';
+
+  const ndErr = (msg) => {
+    const e = el('nd-error');
+    e.textContent = msg;
+    e.classList.remove('hidden');
+    setTimeout(() => e.classList.add('hidden'), 3000);
+    if (!usingPassword) { pin = ''; ndUpdateDots(); }
+  };
+
+  const ndUpdateDots = () => {
+    document.querySelectorAll('#nd-pin-dots span').forEach((dot, i) => {
+      dot.classList.toggle('filled', i < pin.length);
+    });
+  };
+
+  const ndDoLogin = (user) => {
+    startSession(user);
+    screen.classList.add('hidden');
+    showApp();
+  };
+
+  const ndTryPinLogin = async () => {
+    el('nd-error')?.classList.add('hidden');
+    if (pin.length < 4) { ndErr('PIN must be exactly 4 digits'); return; }
+    // Try local staff first
+    let user = authenticate(pin);
+    if (!user) {
+      // Pull from Sheets backup
+      const synced = await syncStaffFromBackup();
+      if (synced) user = authenticate(pin);
+    }
+    if (!user) { ndErr('PIN not recognised — try password or ask an owner'); return; }
+    ls('device_registered', true);
+    ls('device_account', true);
+    ndDoLogin(user);
+  };
+
+  const ndTryPasswordLogin = async () => {
+    const pw = el('nd-pw-input')?.value;
+    if (!pw) { ndErr('Enter your password'); return; }
+    let user = authenticate(pw, true);
+    if (!user) {
+      const synced = await syncStaffFromBackup();
+      if (synced) user = authenticate(pw, true);
+    }
+    if (!user) { ndErr('Password not recognised — try again'); return; }
+    ls('device_registered', true);
+    ls('device_account', true);
+    ndDoLogin(user);
+  };
+
+  document.querySelectorAll('.pin-btn[data-nddigit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (usingPassword || pin.length >= 4) return;
+      pin += btn.dataset.nddigit; ndUpdateDots();
+      if (pin.length === 4) ndTryPinLogin();
+    });
+  });
+  el('nd-pin-clear')?.addEventListener('click', () => { if (!usingPassword) { pin = pin.slice(0,-1); ndUpdateDots(); } });
+  el('nd-pin-enter')?.addEventListener('click', () => { if (!usingPassword) ndTryPinLogin(); });
+  el('nd-pw-btn')?.addEventListener('click', ndTryPasswordLogin);
+  el('nd-pw-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') ndTryPasswordLogin(); });
+
+  el('nd-toggle-pw')?.addEventListener('click', () => {
+    usingPassword = !usingPassword;
+    el('nd-pin-dots').parentElement.classList.toggle('hidden', usingPassword);
+    el('nd-login-panel').querySelector('.pin-pad').classList.toggle('hidden', usingPassword);
+    el('nd-pw-section').classList.toggle('hidden', !usingPassword);
+    el('nd-toggle-pw').textContent = usingPassword ? '← Use PIN instead' : 'Use password instead';
+    if (usingPassword) el('nd-pw-input')?.focus();
+    else { pin = ''; ndUpdateDots(); }
+  });
 }
+
+window.ndShowTab = function(tab) {
+  const isLogin = tab === 'login';
+  el('nd-tab-login')?.classList.toggle('active', isLogin);
+  el('nd-tab-signup')?.classList.toggle('active', !isLogin);
+  el('nd-login-panel').style.display  = isLogin ? 'flex' : 'none';
+  el('nd-signup-panel').style.display = isLogin ? 'none' : 'flex';
+  el('nd-error')?.classList.add('hidden');
+};
+
+window.ndSubmitInvite = async function() {
+  const raw = el('nd-invite-input')?.value?.trim();
+  if (!raw) { const e = el('nd-error'); e.textContent = 'Paste your invite link first'; e.classList.remove('hidden'); return; }
+
+  // Extract token from full URL or bare token
+  let token = raw;
+  try {
+    const u = new URL(raw);
+    token = u.searchParams.get('invite') || raw;
+  } catch {}
+
+  const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
+  if (!scriptUrl) {
+    const e = el('nd-error'); e.textContent = 'Google Sheets not configured — ask an owner to set it up first'; e.classList.remove('hidden');
+    return;
+  }
+
+  const btn = el('nd-invite-input')?.nextElementSibling;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+
+  try {
+    const res  = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'registerDevice', inviteToken: token, deviceId: ensureDeviceId(), deviceName: getDeviceName() }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.registered) {
+      ls('device_registered', true);
+      el('access-screen').classList.add('hidden');
+      showRegisterScreen();
+    } else {
+      const e = el('nd-error'); e.textContent = 'Invite link is invalid or already used — ask for a new one'; e.classList.remove('hidden');
+      if (btn) { btn.disabled = false; btn.textContent = 'Continue →'; }
+    }
+  } catch {
+    const e = el('nd-error'); e.textContent = 'Could not connect — check your internet and try again'; e.classList.remove('hidden');
+    if (btn) { btn.disabled = false; btn.textContent = 'Continue →'; }
+  }
+};
 
 async function autoRegisterFounderDevice() {
   const scriptUrl = ls('script_url') || CFG.SCRIPT_URL;
@@ -4565,11 +4742,11 @@ async function boot() {
   // Check device registration (only enforced when Sheets URL is set)
   const access = await checkDeviceAccess();
   if (access === 'restricted') {
-    showAccessScreen('Ask an owner to send you an invite link to register this device.');
+    showNewDeviceScreen();
     return;
   }
   if (access === 'invalid_invite') {
-    showAccessScreen('This invite link is invalid or has already been used. Ask for a new one.');
+    showNewDeviceScreen('This invite link is invalid or has already been used. Use the Sign Up tab to paste a new one, or use Log In if you already have an account.');
     return;
   }
 
